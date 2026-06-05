@@ -8,6 +8,8 @@ import numpy as np
 import atexit
 import time
 import datetime
+import gc
+import traceback
 
 # ── 📂 កំណត់ Path និងសញ្ញាណសម្គាល់ម៉ូដែលទាំងអស់ ──────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -432,6 +434,7 @@ def generate_frames(source=0, rotate=0, mirror=False, fps=30):
     # ✅ Key is a unique per-face tuple (top, right, bottom, left) instead of just (top, left)
     #    which could collide when two faces share the same top or left coordinate.
     cached_attributes: dict[tuple, tuple] = {}
+    gc_counter = 0  # ✅ Force garbage collection periodically
 
     while True:
         with _camera_lock:
@@ -447,31 +450,52 @@ def generate_frames(source=0, rotate=0, mirror=False, fps=30):
 
         # ── Detection & recognition (every Nth frame) ──────────────────────
         if frame_index % process_interval == 0:
-            small_frame     = cv2.resize(frame, (0, 0), fx=RECOGNITION_SCALE, fy=RECOGNITION_SCALE)
-            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-            face_locations  = face_recognition.face_locations(rgb_small_frame, model='hog')
-
+            face_locations = []
             face_names = []
             face_known = []
+            
+            try:
+                small_frame     = cv2.resize(frame, (0, 0), fx=RECOGNITION_SCALE, fy=RECOGNITION_SCALE)
+                rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+                face_locations  = face_recognition.face_locations(rgb_small_frame, model='hog')
 
-            # ✅ Only call face_encodings when there are faces AND known encodings
-            if face_locations and known_face_encodings:
-                face_encodings = face_recognition.face_encodings(
-                    rgb_small_frame, face_locations, num_jitters=1
-                )
-                for face_encoding in face_encodings:
-                    name  = "Unknown"
-                    known = False
-                    distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-                    if len(distances) > 0:
-                        best_idx = int(np.argmin(distances))
-                        if distances[best_idx] <= 0.55:
-                            name  = known_face_names[best_idx]
-                            known = True
-                            log_face_access(name)  # ✅ Log known face detection with timestamp
-                    face_names.append(name)
-                    face_known.append(known)
-            else:
+                # ✅ Only call face_encodings when there are faces AND known encodings
+                if face_locations and known_face_encodings:
+                    try:
+                        face_encodings = face_recognition.face_encodings(
+                            rgb_small_frame, face_locations, num_jitters=1
+                        )
+                        for face_encoding in face_encodings:
+                            name  = "Unknown"
+                            known = False
+                            try:
+                                distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+                                if len(distances) > 0:
+                                    best_idx = int(np.argmin(distances))
+                                    if distances[best_idx] <= 0.55:
+                                        name  = known_face_names[best_idx]
+                                        known = True
+                                        log_face_access(name)  # ✅ Log known face detection with timestamp
+                                del distances  # ✅ Explicit cleanup
+                            except Exception as e:
+                                print(f"⚠️ Face distance error: {e}", file=sys.stderr)
+                            face_names.append(name)
+                            face_known.append(known)
+                        del face_encodings  # ✅ Explicit cleanup
+                    except Exception as e:
+                        print(f"⚠️ Face encoding error: {e}", file=sys.stderr)
+                        face_names = ["Unknown"] * len(face_locations)
+                        face_known = [False]     * len(face_locations)
+                else:
+                    face_names = ["Unknown"] * len(face_locations)
+                    face_known = [False]     * len(face_locations)
+                
+                # ✅ Cleanup temporary arrays
+                del small_frame, rgb_small_frame
+                
+            except Exception as e:
+                print(f"⚠️ Face detection error: {e}", file=sys.stderr)
+                traceback.print_exc()
                 face_names = ["Unknown"] * len(face_locations)
                 face_known = [False]     * len(face_locations)
 
@@ -511,6 +535,13 @@ def generate_frames(source=0, rotate=0, mirror=False, fps=30):
             continue
 
         frame_index += 1
+        
+        # ✅ Force garbage collection every 30 frames to prevent memory buildup
+        gc_counter += 1
+        if gc_counter >= 30:
+            gc.collect()
+            gc_counter = 0
+        
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
