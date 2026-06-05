@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FaceNet OS — AI Surveillance</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="app" data-tab="feed">
+
+    <!-- ── TOP NAV BAR ── -->
+    <nav>
+        <div class="school-identity">
+            <div class="school-logo">
+                <img src="{{ url_for('static', filename='logo/rupp.png') }}" alt="RUPP Logo">
+            </div>
+            <div class="school-info">
+                <div class="school-name">សាកលវិទ្យាល័យភូមិន្ទភ្នំពេញ</div>
+                <div class="school-sub">Royal University of Phnom Penh · ក្រុម 4</div>
+            </div>
+        </div>
+
+        <div class="nav-center">
+            <div class="nav-pill">
+                <span class="pill-dot pulse-green"></span>
+                <span class="pill-label">System Active</span>
+            </div>
+            <div class="nav-stat-group">
+                <div class="nav-stat">
+                    <span class="nav-stat-val" id="fps-val">30</span>
+                    <span class="nav-stat-lbl">fps</span>
+                </div>
+                <div class="divider-v"></div>
+                <div class="nav-stat">
+                    <span class="nav-stat-val" id="detect-count">0</span>
+                    <span class="nav-stat-lbl">detected</span>
+                </div>
+                <div class="divider-v"></div>
+                <div class="nav-stat">
+                    <span class="nav-stat-val" id="uptime-val">00:00</span>
+                    <span class="nav-stat-lbl">uptime</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="nav-right">
+            <div class="rec-badge">
+                <span class="rec-dot"></span> REC
+            </div>
+            <div class="clock" id="clock">--:--:--</div>
+        </div>
+    </nav>
+
+    <!-- ── LEFT PANEL ── -->
+    <aside class="left-panel">
+
+        <div class="panel-section">
+            <div class="section-header">
+                <span class="section-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+                    </svg>
+                </span>
+                Camera Controls
+            </div>
+
+            <div class="field-group">
+                <label class="field-label">Camera Source</label>
+                <select id="cameraSelect" class="field-select">
+                    <option value="0">Default — Camera 0</option>
+                </select>
+            </div>
+
+            <div class="field-group">
+                <label class="field-label">Rotation</label>
+                <div class="seg-control">
+                    <button class="seg-btn active" data-val="0">0°</button>
+                    <button class="seg-btn" data-val="90">90°</button>
+                    <button class="seg-btn" data-val="180">180°</button>
+                    <button class="seg-btn" data-val="270">270°</button>
+                </div>
+            </div>
+
+            <div class="field-row">
+                <div class="field-row-left">
+                    <span class="field-label">Mirror Feed</span>
+                    <span class="field-hint">Horizontal flip</span>
+                </div>
+                <label class="toggle-wrap">
+                    <input type="checkbox" id="mirrorChk">
+                    <span class="toggle-track">
+                        <span class="toggle-thumb"></span>
+                    </span>
+                </label>
+            </div>
+
+            <div class="field-row">
+                <div class="field-row-left">
+                    <span class="field-label">60 FPS Mode</span>
+                    <span class="field-hint">High framerate</span>
+                </div>
+                <label class="toggle-wrap">
+                    <input type="checkbox" id="fps60Chk">
+                    <span class="toggle-track">
+                        <span class="toggle-thumb"></span>
+                    </span>
+                </label>
+            </div>
+
+            <div class="btn-stack">
+                <button id="switchBtn" class="btn-primary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    Apply Feed
+                </button>
+                <button id="refreshBtn" class="btn-ghost">Refresh Cameras</button>
+            </div>
+
+            <div class="source-chip">
+                <span class="chip-dot"></span>
+                <span class="chip-label">Active Channel</span>
+                <span class="chip-val" id="currentSource">SRC : 0</span>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-header">
+                <span class="section-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                    </svg>
+                </span>
+                System Metrics
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-val">12ms</div>
+                    <div class="metric-key">Latency</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-val">99.4%</div>
+                    <div class="metric-key">Accuracy</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-val" id="res-val">720p</div>
+                    <div class="metric-key">Resolution</div>
+                </div>
+                <div class="metric-card accent">
+                    <div class="metric-val" id="ai-val">ON</div>
+                    <div class="metric-key">AI Engine</div>
+                </div>
+            </div>
+        </div>
+
+    </aside>
+
+    <!-- ── FEED AREA ── -->
+    <main class="feed-area">
+        <div class="feed-frame">
+            <div class="corner tl"></div>
+            <div class="corner tr"></div>
+            <div class="corner bl"></div>
+            <div class="corner br"></div>
+        </div>
+        <div class="hud-tags">
+            <span class="hud-badge rec">
+                <span class="hud-dot"></span> REC
+            </span>
+            <span class="hud-badge src" id="feed-source-tag">SRC : 0</span>
+            <span class="hud-badge ai">AI : ACTIVE</span>
+            <span class="hud-badge fps" id="hud-fps">30 FPS</span>
+        </div>
+        <div class="hud-bottom">
+            <span class="hud-ts" id="hud-timestamp">--:--:--</span>
+            <span class="hud-session">PROJECT CAMERASCANNER</span>
+        </div>
+        <img id="cameraStream" src="{{ url_for('video_feed') }}?source=0" alt="Live Camera Feed">
+        <div class="scan-line"></div>
+    </main>
+
+    <!-- ── ANALYTICS VIEW ── -->
+    <main class="analytics-area tab-view">
+        <div class="view-header">
+            <div>
+                <div class="view-title">Analytics</div>
+                <div class="view-subtitle">Runtime, stream, and detection summary</div>
+            </div>
+            <div class="view-chip">LIVE</div>
+        </div>
+
+        <div class="analytics-grid">
+            <div class="analytics-card">
+                <div class="analytics-label">Current FPS</div>
+                <div class="analytics-value" id="analytics-fps">30</div>
+            </div>
+            <div class="analytics-card">
+                <div class="analytics-label">Detections</div>
+                <div class="analytics-value" id="analytics-detect">0</div>
+            </div>
+            <div class="analytics-card">
+                <div class="analytics-label">Uptime</div>
+                <div class="analytics-value" id="analytics-uptime">00:00</div>
+            </div>
+            <div class="analytics-card accent">
+                <div class="analytics-label">AI Engine</div>
+                <div class="analytics-value">ON</div>
+            </div>
+        </div>
+
+        <div class="analytics-panel">
+            <div class="panel-title">Stream Status</div>
+            <div class="status-list">
+                <div class="status-row">
+                    <span>Camera Source</span>
+                    <strong id="analytics-source">SRC : 0</strong>
+                </div>
+                <div class="status-row">
+                    <span>Rotation</span>
+                    <strong id="analytics-rotation">0 deg</strong>
+                </div>
+                <div class="status-row">
+                    <span>Mirror</span>
+                    <strong id="analytics-mirror">OFF</strong>
+                </div>
+                <div class="status-row">
+                    <span>Resolution</span>
+                    <strong>720p</strong>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ── SETTINGS VIEW ── -->
+    <main class="settings-area tab-view">
+        <div class="view-header">
+            <div>
+                <div class="view-title">Settings</div>
+                <div class="view-subtitle">Camera configuration and system state</div>
+            </div>
+            <div class="view-chip">READY</div>
+        </div>
+
+        <div class="settings-grid">
+            <div class="settings-card">
+                <div class="panel-title">Active Feed</div>
+                <div class="status-list">
+                    <div class="status-row">
+                        <span>Source</span>
+                        <strong id="settings-source">SRC : 0</strong>
+                    </div>
+                    <div class="status-row">
+                        <span>FPS Mode</span>
+                        <strong id="settings-fps">30 FPS</strong>
+                    </div>
+                    <div class="status-row">
+                        <span>Mirror</span>
+                        <strong id="settings-mirror">OFF</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-card">
+                <div class="panel-title">Quick Actions</div>
+                <div class="btn-stack compact">
+                    <button class="btn-primary" type="button" onclick="document.getElementById('switchBtn').click()">Apply Feed</button>
+                    <button class="btn-ghost" type="button" onclick="document.getElementById('refreshBtn').click()">Refresh Cameras</button>
+                    <button class="btn-ghost" type="button" onclick="document.getElementById('clearLogBtn').click()">Clear Log</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ── RIGHT PANEL ── -->
+    <aside class="right-panel">
+        <div class="right-header">
+            <span class="section-header right-title">Detection Log</span>
+            <button class="clear-btn" id="clearLogBtn">Clear</button>
+        </div>
+        <div class="log-scroll" id="logList">
+            <div class="log-entry system">
+                <div class="log-meta">
+                    <span class="log-badge system">SYS</span>
+                    <span class="log-time" id="init-ts">--:--:--</span>
+                </div>
+                <div class="log-text">System initialized successfully.</div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ── BOTTOM BAR ── -->
+    <footer class="tab-bar">
+        <div class="bar-left">
+            <div class="status-pill ok">
+                <span class="s-dot"></span> Camera Online
+            </div>
+            <div class="status-pill ok">
+                <span class="s-dot"></span> AI Active
+            </div>
+        </div>
+
+        <div class="bar-center">
+            <button class="tab-btn active" onclick="setTab(this,'feed')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>
+                </svg>
+                Live Feed
+            </button>
+            <button class="tab-btn" onclick="setTab(this,'analytics')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+                Analytics
+            </button>
+            <button class="tab-btn" onclick="setTab(this,'settings')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M12 2v2M12 20v2M2 12h2M20 12h2M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41"/>
+                </svg>
+                Settings
+            </button>
+        </div>
+
+        <div class="bar-right">
+            <span class="bar-copy">© 2026 CAMERASCANNER</span>
+            <span class="bar-sep">·</span>
+            <span id="session-id" class="bar-session">SESSION : ACTIVE</span>
+        </div>
+    </footer>
+
+</div>
+
+<script>
+const baseFeedUrl = "{{ url_for('video_feed') }}";
+const apiCameras  = "{{ url_for('api_cameras') }}";
+const img         = document.getElementById('cameraStream');
+const sel         = document.getElementById('cameraSelect');
+const curSrc      = document.getElementById('currentSource');
+const feedSrcTag  = document.getElementById('feed-source-tag');
+const logList     = document.getElementById('logList');
+
+let startTime = Date.now();
+
+function tick() {
+    const now = new Date();
+    const hms = now.toTimeString().slice(0,8);
+    document.getElementById('clock').textContent = hms;
+    document.getElementById('hud-timestamp').textContent = hms;
+
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const m = String(Math.floor(elapsed / 60)).padStart(2,'0');
+    const s = String(elapsed % 60).padStart(2,'0');
+    document.getElementById('uptime-val').textContent = `${m}:${s}`;
+    document.getElementById('analytics-uptime').textContent = `${m}:${s}`;
+
+    const initTs = document.getElementById('init-ts');
+    if (initTs && initTs.textContent === '--:--:--') initTs.textContent = hms;
+}
+tick(); setInterval(tick, 1000);
+
+// Segmented rotation control
+let selectedRotate = '0';
+document.querySelectorAll('.seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedRotate = btn.dataset.val;
+    });
+});
+
+// FPS display toggle + video feed update
+document.getElementById('fps60Chk').addEventListener('change', function() {
+    const fpsEl = document.getElementById('fps-val');
+    const hudFps = document.getElementById('hud-fps');
+    const analyticsFps = document.getElementById('analytics-fps');
+    const settingsFps = document.getElementById('settings-fps');
+    const fps = this.checked ? '60' : '30';
+    
+    // Update display labels
+    fpsEl.textContent = fps;
+    hudFps.textContent = `${fps} FPS`;
+    analyticsFps.textContent = fps;
+    settingsFps.textContent = `${fps} FPS`;
+    
+    // Apply video feed change immediately
+    const s = sel.value || '0';
+    const rot = selectedRotate || '0';
+    const mir = document.getElementById('mirrorChk').checked ? '1' : '0';
+    img.src = `${baseFeedUrl}?source=${s}&rotate=${rot}&mirror=${mir}&fps=${fps}&_=${Date.now()}`;
+    addLog(`60 FPS Mode: ${this.checked ? 'ON' : 'OFF'} — Now using ${fps} FPS`, 'system');
+});
+
+function loadCameras() {
+    fetch(apiCameras).then(r=>r.json()).then(list=>{
+        sel.innerHTML = '';
+        if (!list || list.length === 0) {
+            sel.innerHTML = '<option value="0">Default — Camera 0</option>';
+            return;
+        }
+        list.forEach(i => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = `Camera ${i}`;
+            sel.appendChild(opt);
+        });
+        sel.value = list[0];
+        curSrc.textContent = `SRC : ${list[0]}`;
+    }).catch(() => {});
+}
+loadCameras();
+
+document.getElementById('refreshBtn').addEventListener('click', () => {
+    loadCameras();
+    addLog('Cameras refreshed.', 'system');
+});
+
+document.getElementById('switchBtn').addEventListener('click', () => {
+    const s   = sel.value || '0';
+    const rot = selectedRotate || '0';
+    const mir = document.getElementById('mirrorChk').checked ? '1' : '0';
+    const fps = document.getElementById('fps60Chk').checked ? '60' : '30';
+    img.src = `${baseFeedUrl}?source=${s}&rotate=${rot}&mirror=${mir}&fps=${fps}&_=${Date.now()}`;
+    curSrc.textContent = `SRC : ${s}`;
+    feedSrcTag.textContent = `SRC : ${s}`;
+    document.getElementById('analytics-source').textContent = `SRC : ${s}`;
+    document.getElementById('analytics-rotation').textContent = `${rot} deg`;
+    document.getElementById('analytics-mirror').textContent = mir === '1' ? 'ON' : 'OFF';
+    document.getElementById('settings-source').textContent = `SRC : ${s}`;
+    document.getElementById('settings-mirror').textContent = mir === '1' ? 'ON' : 'OFF';
+    addLog(`Feed: Camera ${s} | Rotate ${rot} deg | Mirror ${mir==='1'?'ON':'OFF'} | ${fps} FPS`, 'system');
+});
+
+function addLog(msg, type='system') {
+    const now = new Date().toTimeString().slice(0,8);
+    const el = document.createElement('div');
+    el.className = `log-entry ${type}`;
+    const badge = type === 'detected' ? 'ID' : type === 'unknown' ? 'UNK' : 'SYS';
+    el.innerHTML = `
+        <div class="log-meta">
+            <span class="log-badge ${type}">${badge}</span>
+            <span class="log-time">${now}</span>
+        </div>
+        <div class="log-text">${msg}</div>`;
+    logList.prepend(el);
+    while (logList.children.length > 60) logList.lastChild.remove();
+
+    // Update detect count for non-system logs
+    if (type !== 'system') {
+        const cur = parseInt(document.getElementById('detect-count').textContent) || 0;
+        const next = cur + 1;
+        document.getElementById('detect-count').textContent = next;
+        document.getElementById('analytics-detect').textContent = next;
+    }
+}
+
+document.getElementById('clearLogBtn').addEventListener('click', () => {
+    logList.innerHTML = '';
+    addLog('Log cleared.', 'system');
+});
+
+function setTab(btn, tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelector('.app').dataset.tab = tab;
+}
+</script>
+</body>
+</html>
