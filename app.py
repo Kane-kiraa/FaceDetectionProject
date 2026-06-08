@@ -68,46 +68,36 @@ app = Flask(__name__)
 
 # ── Thread-safe camera management ─────────────────────────────────────────────
 _camera_lock   = threading.Lock()
-camera         = None
-camera_source  = None
-camera_fps     = None
 
 known_face_encodings = []
 known_face_names     = []
 faces_folder         = "known_faces"
 
-RECOGNITION_SCALE = 0.25
-JPEG_QUALITY      = 78
+RECOGNITION_SCALE  = 0.25
+JPEG_QUALITY       = 78
 JPEG_QUALITY_60FPS = 65  # Lower quality for 60 FPS to improve encoding speed
 
 
 def open_camera(source=0, fps=30):
-    """Open a camera device and configure FPS. Returns cap or None.
-
-    Strategy:
-      1. Try V4L2 first (best for USB / Iriun virtual cameras on Linux).
-      2. If that fails, fall back to the OS-default backend (CAP_ANY) which
-         handles built-in laptop webcams on Linux, Windows (DSHOW/MSMF),
-         and macOS (AVFoundation) automatically.
-    """
-    # ── attempt 1: explicit V4L2 (Linux USB / virtual cam) ──────────────────
+    """Open a camera device and configure FPS. Returns cap or None."""
     backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
 
-    for backend in backends:
-        try:
-            cap = cv2.VideoCapture(source, backend)
-        except Exception:
-            continue
+    with _camera_lock:
+        for backend in backends:
+            try:
+                cap = cv2.VideoCapture(source, backend)
+            except Exception:
+                continue
 
-        if cap.isOpened():
-            cap.set(cv2.CAP_PROP_FPS, fps)
-            actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            backend_name = "V4L2" if backend == cv2.CAP_V4L2 else "AUTO"
-            print(f"✅ Camera opened [{backend_name}]: {actual_w}x{actual_h} @ {fps}fps")
-            return cap
+            if cap.isOpened():
+                cap.set(cv2.CAP_PROP_FPS, fps)
+                actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                backend_name = "V4L2" if backend == cv2.CAP_V4L2 else "AUTO"
+                print(f"✅ Camera opened [{backend_name}]: {actual_w}x{actual_h} @ {fps}fps")
+                return cap
 
-        cap.release()
+            cap.release()
 
     print(f"❌ Cannot open camera source={source} with any backend.", file=sys.stderr)
     return None
@@ -138,67 +128,27 @@ def load_known_faces():
         print("⚠️  No known faces loaded. Everyone will be labelled 'Unknown'.", file=sys.stderr)
 
 
-def get_camera(source=0, fps=30):
-    """Return (and lazily create) the global camera — thread-safe."""
-    global camera, camera_source, camera_fps
-    with _camera_lock:
-        need_new = (
-            camera is None
-            or not camera.isOpened()
-            or camera_source != source
-            or camera_fps != fps
-        )
-        if need_new:
-            if camera is not None:
-                try:
-                    camera.release()
-                except Exception:
-                    pass
-            camera = camera_source = camera_fps = None
-            cap = open_camera(source, fps)
-            if cap is not None and cap.isOpened():
-                camera        = cap
-                camera_source = source
-                camera_fps    = fps
-            else:
-                print("❌ ERROR: Cannot open camera.", file=sys.stderr)
-    return camera
-
-
-def release_camera():
-    global camera, camera_source, camera_fps
-    with _camera_lock:
-        if camera is not None:
-            camera.release()
-            camera = camera_source = camera_fps = None
-
-
-atexit.register(release_camera)
 load_known_faces()
 
 
 # ── Face access logging ────────────────────────────────────────────────────────
 ACCESS_LOG_FILE = "access_log.txt"
 _access_log_lock = threading.Lock()
-_last_logged_faces: dict[str, float] = {}  # {name: timestamp} to avoid duplicate logs
+_last_logged_faces: dict[str, float] = {}
+
 
 def log_face_access(name: str):
-    """Log a known face detection with timestamp to access_log.txt.
-    
-    Avoids duplicate logs for the same person within 10 seconds.
-    """
     global _last_logged_faces
-    
+
     if name == "Unknown":
-        return  # Don't log unknown faces
-    
+        return
+
     current_time = time.time()
-    
-    # Skip if this person was logged recently (within 10 seconds)
+
     if name in _last_logged_faces:
         if current_time - _last_logged_faces[name] < 10:
             return
-    
+
     with _access_log_lock:
         try:
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -225,12 +175,12 @@ def estimate_emotion_from_landmarks(frame, top, right, bottom, left):
     if mouth_top.shape[0] < 6 or mouth_bot.shape[0] < 6:
         return None
 
-    left_corner = mouth_top[0]
+    left_corner  = mouth_top[0]
     right_corner = mouth_top[6] if mouth_top.shape[0] > 6 else mouth_top[-1]
-    top_center = np.mean(mouth_top[3:9], axis=0)
+    top_center   = np.mean(mouth_top[3:9], axis=0)
     bottom_center = np.mean(mouth_bot[3:9], axis=0)
 
-    mouth_width = np.linalg.norm(right_corner - left_corner)
+    mouth_width  = np.linalg.norm(right_corner - left_corner)
     mouth_height = abs(bottom_center[1] - top_center[1])
     if mouth_width <= 0:
         return None
@@ -249,9 +199,9 @@ def predict_face_attributes(frame, top, right, bottom, left):
     h, w = frame.shape[:2]
 
     pad = 35
-    t = max(0, top  - pad)
+    t = max(0, top    - pad)
     b = min(h, bottom + pad)
-    l = max(0, left  - pad)
+    l = max(0, left   - pad)
     r = min(w, right  + pad)
     face_crop = frame[t:b, l:r]
 
@@ -263,7 +213,7 @@ def predict_face_attributes(frame, top, right, bottom, left):
         if gender_net is not None or age_net is not None:
             blob = cv2.dnn.blobFromImage(
                 face_crop, 1.0, (227, 227),
-                GENDER_MEAN, swapRB=False        # Caffe models expect BGR input + mean subtraction
+                GENDER_MEAN, swapRB=False
             )
             if gender_net is not None:
                 gender_net.setInput(blob)
@@ -314,7 +264,6 @@ def draw_hud_face_box(frame, top, right, bottom, left, name,
     arm = max(16, int(min(w, h) * 0.20))
     thick = 2
 
-    # Corner brackets
     def corner(cx, cy, dx, dy):
         cv2.line(frame, (cx, cy), (cx + dx * arm, cy), color_main, thick, cv2.LINE_AA)
         cv2.line(frame, (cx, cy), (cx, cy + dy * arm), color_main, thick, cv2.LINE_AA)
@@ -324,7 +273,6 @@ def draw_hud_face_box(frame, top, right, bottom, left, name,
     corner(left,  bottom,  +1, -1)
     corner(right, bottom,  -1, -1)
 
-    # Dashed border
     dash_len, gap_len = 6, 5
 
     def dashed_hline(y, x0, x1):
@@ -346,14 +294,12 @@ def draw_hud_face_box(frame, top, right, bottom, left, name,
     dashed_vline(left,   top,  bottom)
     dashed_vline(right,  top,  bottom)
 
-    # Centre crosshair
     cx_c, cy_c = (left + right) // 2, (top + bottom) // 2
     ch = 8
     cv2.line(frame,   (cx_c - ch, cy_c), (cx_c + ch, cy_c), color_main, 1, cv2.LINE_AA)
     cv2.line(frame,   (cx_c, cy_c - ch), (cx_c, cy_c + ch), color_main, 1, cv2.LINE_AA)
     cv2.circle(frame, (cx_c, cy_c), 3, color_main, 1, cv2.LINE_AA)
 
-    # Info panel
     font       = cv2.FONT_HERSHEY_SIMPLEX
     font_small = 0.42
     line_h     = 22
@@ -377,11 +323,10 @@ def draw_hud_face_box(frame, top, right, bottom, left, name,
     panel_w = max_w + panel_pad * 2 + 10
     panel_h = len(lines) * line_h + panel_pad * 2
 
-    # ✅ Clamp panel to frame bounds so it never renders off-screen
     panel_x = right + 12
     panel_y = top
     if panel_x + panel_w > fw:
-        panel_x = max(0, left - panel_w - 12)   # flip to left side
+        panel_x = max(0, left - panel_w - 12)
     if panel_y + panel_h > fh:
         panel_y = max(0, fh - panel_h)
 
@@ -399,7 +344,6 @@ def draw_hud_face_box(frame, top, right, bottom, left, name,
         cv2.putText(frame, label_str, (panel_x + panel_pad + 6, ty),          font, font_small, color_accent, 1, cv2.LINE_AA)
         cv2.putText(frame, value,     (panel_x + panel_pad + 6 + lw, ty),     font, font_small, color_text,   1, cv2.LINE_AA)
 
-    # Connector line from box to panel
     cv2.line(frame, (right, top + arm), (panel_x, panel_y + arm), dash_color, 1, cv2.LINE_AA)
 
 
@@ -414,136 +358,123 @@ def _rotate_frame(frame, rotate):
     return frame
 
 
-def generate_frames(source=0, rotate=0, mirror=False, fps=30):
-    cam = get_camera(source, fps)
-    if cam is None:
-        return
-
-    # ✅ process_interval: analyse every Nth frame for performance
-    # At 60 fps: process every 6 frames (10 fps AI, 60 fps video output)
-    # At 30 fps: process every 3 frames (10 fps AI, 30 fps video output)
+def generate_frames(cam, rotate=0, mirror=False, fps=30):
     process_interval = 6 if fps >= 60 else 3
-    # ✅ Use round() to avoid off-by-one from float precision (e.g. 1/0.25 = 4.0)
     scale_multiplier = round(1.0 / RECOGNITION_SCALE)
-    # Use lower JPEG quality for 60 FPS to maintain throughput
-    quality = JPEG_QUALITY_60FPS if fps >= 60 else JPEG_QUALITY
+    quality          = JPEG_QUALITY_60FPS if fps >= 60 else JPEG_QUALITY
     encode_params    = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
 
-    frame_index      = 0
-    cached_faces     = []       # list of (top, right, bottom, left, name, is_known)
-    # ✅ Key is a unique per-face tuple (top, right, bottom, left) instead of just (top, left)
-    #    which could collide when two faces share the same top or left coordinate.
+    frame_index = 0
+    cached_faces: list = []
     cached_attributes: dict[tuple, tuple] = {}
-    gc_counter = 0  # ✅ Force garbage collection periodically
+    gc_counter = 0
 
-    while True:
-        with _camera_lock:
-            if cam is None or not cam.isOpened():
-                break
+    try:
+        while True:                                         # ✅ FIX 1: loop is now the outer scope
             success, frame = cam.read()
+            if not success:                                 # ✅ FIX 2: skip bad frames, don't break
+                time.sleep(0.01)
+                continue
 
-        if not success:
-            break
+            # ── Mirror ──────────────────────────────────────────────────────
+            if mirror:                                      # ✅ FIX 3: mirror is inside the loop
+                frame = cv2.flip(frame, 1)
 
-        if mirror:
-            frame = cv2.flip(frame, 1)
+            # ── Detection & recognition (every Nth frame) ──────────────────
+            if frame_index % process_interval == 0:
+                face_locations = []
+                face_names     = []
+                face_known     = []
 
-        # ── Detection & recognition (every Nth frame) ──────────────────────
-        if frame_index % process_interval == 0:
-            face_locations = []
-            face_names = []
-            face_known = []
-            
-            try:
-                small_frame     = cv2.resize(frame, (0, 0), fx=RECOGNITION_SCALE, fy=RECOGNITION_SCALE)
-                rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-                face_locations  = face_recognition.face_locations(rgb_small_frame, model='hog')
+                try:
+                    small_frame     = cv2.resize(frame, (0, 0), fx=RECOGNITION_SCALE, fy=RECOGNITION_SCALE)
+                    rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+                    face_locations  = face_recognition.face_locations(rgb_small_frame, model='hog')
 
-                # ✅ Only call face_encodings when there are faces AND known encodings
-                if face_locations and known_face_encodings:
-                    try:
-                        face_encodings = face_recognition.face_encodings(
-                            rgb_small_frame, face_locations, num_jitters=1
-                        )
-                        for face_encoding in face_encodings:
-                            name  = "Unknown"
-                            known = False
-                            try:
-                                distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-                                if len(distances) > 0:
-                                    best_idx = int(np.argmin(distances))
-                                    if distances[best_idx] <= 0.55:
-                                        name  = known_face_names[best_idx]
-                                        known = True
-                                        log_face_access(name)  # ✅ Log known face detection with timestamp
-                                del distances  # ✅ Explicit cleanup
-                            except Exception as e:
-                                print(f"⚠️ Face distance error: {e}", file=sys.stderr)
-                            face_names.append(name)
-                            face_known.append(known)
-                        del face_encodings  # ✅ Explicit cleanup
-                    except Exception as e:
-                        print(f"⚠️ Face encoding error: {e}", file=sys.stderr)
+                    if face_locations and known_face_encodings:
+                        try:
+                            face_encodings = face_recognition.face_encodings(
+                                rgb_small_frame, face_locations, num_jitters=1
+                            )
+                            for face_encoding in face_encodings:
+                                name  = "Unknown"
+                                known = False
+                                try:
+                                    distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+                                    if len(distances) > 0:
+                                        best_idx = int(np.argmin(distances))
+                                        if distances[best_idx] <= 0.55:
+                                            name  = known_face_names[best_idx]
+                                            known = True
+                                            log_face_access(name)
+                                    del distances
+                                except Exception as e:
+                                    print(f"⚠️ Face distance error: {e}", file=sys.stderr)
+                                face_names.append(name)
+                                face_known.append(known)
+                            del face_encodings
+                        except Exception as e:
+                            print(f"⚠️ Face encoding error: {e}", file=sys.stderr)
+                            face_names = ["Unknown"] * len(face_locations)
+                            face_known = [False]     * len(face_locations)
+                    else:
                         face_names = ["Unknown"] * len(face_locations)
                         face_known = [False]     * len(face_locations)
-                else:
+
+                    del small_frame, rgb_small_frame
+
+                except Exception as e:
+                    print(f"⚠️ Face detection error: {e}", file=sys.stderr)
+                    traceback.print_exc()
                     face_names = ["Unknown"] * len(face_locations)
                     face_known = [False]     * len(face_locations)
-                
-                # ✅ Cleanup temporary arrays
-                del small_frame, rgb_small_frame
-                
-            except Exception as e:
-                print(f"⚠️ Face detection error: {e}", file=sys.stderr)
-                traceback.print_exc()
-                face_names = ["Unknown"] * len(face_locations)
-                face_known = [False]     * len(face_locations)
 
-            s = scale_multiplier
-            new_cached_faces     = []
-            new_cached_attributes: dict[tuple, tuple] = {}
+                s = scale_multiplier
+                new_cached_faces: list              = []
+                new_cached_attributes: dict[tuple, tuple] = {}
 
-            for (top, right, bottom, left), name, is_known in zip(face_locations, face_names, face_known):
-                t, r, b, l = top * s, right * s, bottom * s, left * s
-                new_cached_faces.append((t, r, b, l, name, is_known))
+                for (top, right, bottom, left), name, is_known in zip(face_locations, face_names, face_known):
+                    t, r, b, l = top * s, right * s, bottom * s, left * s
+                    new_cached_faces.append((t, r, b, l, name, is_known))
 
-                # ✅ Use full bounding box as key (no coordinate collisions)
-                key = (t, r, b, l)
-                if key in cached_attributes:
-                    new_cached_attributes[key] = cached_attributes[key]
-                else:
-                    new_cached_attributes[key] = predict_face_attributes(frame, t, r, b, l)
+                    key = (t, r, b, l)
+                    if key in cached_attributes:
+                        new_cached_attributes[key] = cached_attributes[key]
+                    else:
+                        new_cached_attributes[key] = predict_face_attributes(frame, t, r, b, l)
 
-            # ✅ Replace old cache — prevents unbounded memory growth
-            cached_faces      = new_cached_faces
-            cached_attributes = new_cached_attributes
+                cached_faces      = new_cached_faces
+                cached_attributes = new_cached_attributes
 
-        # ── Draw HUD ────────────────────────────────────────────────────────
-        for top, right, bottom, left, name, is_known in cached_faces:
-            key = (top, right, bottom, left)
-            gender, age, emotion = cached_attributes.get(key, ("?", "?", "?"))
-            draw_hud_face_box(frame, top, right, bottom, left, name, is_known,
-                              gender=gender, age=age, emotion=emotion)
+            # ── Draw HUD ────────────────────────────────────────────────────
+            for top, right, bottom, left, name, is_known in cached_faces:
+                key = (top, right, bottom, left)
+                gender, age, emotion = cached_attributes.get(key, ("?", "?", "?"))
+                draw_hud_face_box(frame, top, right, bottom, left, name, is_known,
+                                  gender=gender, age=age, emotion=emotion)
 
-        # ✅ Rotate BEFORE encoding so the JPEG contains the correctly oriented image
-        if rotate:
-            frame = _rotate_frame(frame, rotate)
+            if rotate:
+                frame = _rotate_frame(frame, rotate)
 
-        ret, buffer = cv2.imencode('.jpg', frame, encode_params)
-        if not ret:
-            frame_index += 1
-            continue
+            ret, buffer = cv2.imencode('.jpg', frame, encode_params)
+            if not ret:
+                frame_index += 1                            # ✅ FIX 4: only one increment per frame
+                continue
 
-        frame_index += 1
-        
-        # ✅ Force garbage collection every 30 frames to prevent memory buildup
-        gc_counter += 1
-        if gc_counter >= 30:
-            gc.collect()
-            gc_counter = 0
-        
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            frame_index += 1                               # ✅ FIX 4: single increment path
+
+            gc_counter += 1
+            if gc_counter >= 30:
+                gc.collect()
+                gc_counter = 0
+
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+    finally:
+        try:
+            cam.release()
+        except Exception:
+            pass
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -579,21 +510,18 @@ def video_feed():
     except ValueError:
         fps = 30
 
-    if get_camera(source, fps) is None:
+    cap = open_camera(source, fps)
+    if cap is None:
         return "Unable to open camera. Check connection.", 503
 
     return Response(
-        generate_frames(source=source, rotate=rotate, mirror=mirror, fps=fps),
+        generate_frames(cap, rotate=rotate, mirror=mirror, fps=fps),
         mimetype='multipart/x-mixed-replace; boundary=frame'
     )
 
 
 @app.route('/api/cameras')
 def api_cameras():
-    """Probe camera indices 0–3 and return those that open successfully.
-    Uses the same V4L2 -> CAP_ANY fallback as open_camera() so that both
-    USB cameras and built-in laptop webcams are discovered correctly.
-    """
     available = []
     for i in range(4):
         found = False
